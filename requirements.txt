@@ -1,6 +1,7 @@
+
 streamlit
+gdown
 face-recognition==1.3.0
 numpy<2
 Pillow
 pandas
-gdown
