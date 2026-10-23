@@ -93,8 +93,8 @@ def find_dataset_root(extract_dir: Path):
     # either directly or inside nested folders.
     for candidate in unique_candidates:
         try:
-            identity_folders = [ 
-                                item for item in candidate.iterdir() if item.is_dir()
+            identity_folders = [
+                item for item in candidate.iterdir() if item.is_dir()
             ]
         except OSError:
             continue
@@ -113,7 +113,9 @@ def find_dataset_root(extract_dir: Path):
                 continue
 
     return None
-    @st.cache_resource(show_spinner=False)
+
+
+@st.cache_resource(show_spinner=False)
 def download_and_prepare_dataset():
     """Download the ZIP from Drive, extract it, and locate the image gallery."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -374,7 +376,7 @@ for face_number, (location, encoding) in enumerate(
 
     # Draw the face rectangle.
     draw.rectangle(
-         [(left, top), (right, bottom)],
+        [(left, top), (right, bottom)],
         outline=color,
         width=3,
     )
