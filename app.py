@@ -1,4 +1,4 @@
-        [(left, top), (right, bottom)],
+            [(left, top), (right, bottom)],
         outline=color,
         width=3,
     )
@@ -100,4 +100,5 @@ st.caption(
     "probability. Incorrect identification is possible. An Unknown result "
     "does not prove that a person is absent from the gallery."
 )
+
 
