@@ -93,8 +93,288 @@ def find_dataset_root(extract_dir: Path):
     # either directly or inside nested folders.
     for candidate in unique_candidates:
         try:
-            identity_folders = [
-                        [(left, top), (right, bottom)],
+            identity_folders = [ 
+                                item for item in candidate.iterdir() if item.is_dir()
+            ]
+        except OSError:
+            continue
+
+        for identity_folder in identity_folders:
+            if folder_has_image_files(identity_folder):
+                return candidate
+            try:
+                if any(
+                    folder_has_image_files(subfolder)
+                    for subfolder in identity_folder.rglob("*")
+                    if subfolder.is_dir()
+                ):
+                    return candidate
+            except OSError:
+                continue
+
+    return None
+    @st.cache_resource(show_spinner=False)
+def download_and_prepare_dataset():
+    """Download the ZIP from Drive, extract it, and locate the image gallery."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
+   # Download the dataset if it is not already available in this instance.
+    if not ZIP_PATH.exists() or ZIP_PATH.stat().st_size == 0:
+        if ZIP_PATH.exists():
+            ZIP_PATH.unlink()
+
+        downloaded_path = gdown.download(
+            id=GOOGLE_DRIVE_FILE_ID,
+            output=str(ZIP_PATH),
+            quiet=False,
+            fuzzy=True,
+        )
+
+        if not downloaded_path or not ZIP_PATH.exists() or ZIP_PATH.stat().st_size == 0:
+            raise RuntimeError(
+                "Google Drive download failed. Check that the file's General "
+                "access is set to 'Anyone with the link' (Viewer)."
+            )
+
+    # Check that the downloaded file is really a ZIP.
+    if not zipfile.is_zipfile(ZIP_PATH):
+        raise RuntimeError(
+            "The downloaded file is not a valid ZIP archive. Check the Google "
+            "Drive sharing link and make sure it points to Celebrity_Images.zip."
+        )
+
+        # Extract only if the expected gallery cannot already be found.
+    dataset_root = find_dataset_root(EXTRACT_DIR)
+    if dataset_root is None:
+        # Clear a partial extraction from an earlier failed run.
+        for child in EXTRACT_DIR.iterdir():
+            if child.is_dir():
+                import shutil
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+        with zipfile.ZipFile(ZIP_PATH, "r") as zip_ref:
+            zip_ref.extractall(EXTRACT_DIR)
+
+        dataset_root = find_dataset_root(EXTRACT_DIR)
+
+    if dataset_root is None:
+        raise RuntimeError(
+            "The ZIP was downloaded and extracted, but celebrity folders were "
+            "not found. The ZIP should contain a 'Celebrity Images' folder "
+            "with one subfolder per identity, such as 'messi' or 'virat_kohli'."
+        )
+
+    return dataset_root
+
+
+try:
+    with st.spinner("Downloading and preparing the celebrity dataset..."):
+        DATASET_PATH = download_and_prepare_dataset()
+except Exception as error:
+    st.error("Could not load the celebrity dataset.")
+    st.exception(error)
+    st.info(
+        "Open the Google Drive ZIP's Share settings and set General access "
+        "to 'Anyone with the link' and role to 'Viewer'."
+    )
+    st.stop()
+
+st.success(f"Dataset folder found: `{DATASET_PATH}`")
+
+
+# --------------------------------------------------
+# 3. BUILD THE CELEBRITY REFERENCE GALLERY
+# --------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def build_gallery(dataset_path_string):
+    encodings_list = []
+    names_list = []
+    skipped = 0
+    dataset_path = Path(dataset_path_string)
+
+    for root, _, files in os.walk(dataset_path):
+        image_files = sorted(
+            filename
+            for filename in files
+            if filename.lower().endswith(IMAGE_EXTENSIONS)
+        )
+
+        if not image_files:
+            continue
+
+        # The folder containing the image is used as the identity label.
+        celebrity_name = Path(root).name
+
+        for filename in image_files:
+            image_path = Path(root) / filename
+
+            try:
+                image = face_recognition.load_image_file(str(image_path))
+                locations = face_recognition.face_locations(image, model="hog")
+
+                if not locations:
+                    skipped += 1
+                    continue
+
+                encodings = face_recognition.face_encodings(
+                    image,
+                    known_face_locations=locations,
+                )
+
+                if not encodings:
+                    skipped += 1
+                    continue
+                # If a reference image has several faces, use its largest face.
+                areas = [
+                    (bottom - top) * (right - left)
+                    for top, right, bottom, left in locations
+                ]
+                largest_index = int(np.argmax(areas))
+
+                encodings_list.append(encodings[largest_index])
+                names_list.append(celebrity_name)
+
+            except Exception as error:
+                skipped += 1
+                print(f"Skipped reference image {image_path}: {error}")
+
+    return encodings_list, names_list, skipped
+
+
+with st.spinner("Building the celebrity reference gallery..."):
+    known_face_encodings, known_face_names, skipped = build_gallery(
+        str(DATASET_PATH)
+    )
+
+if not known_face_encodings:
+    st.error(
+        f"No usable face encodings were found in `{DATASET_PATH}`. "
+        "Check that each celebrity has a separate folder containing clear images."
+    )
+    st.stop()
+
+st.success(
+    f"Gallery loaded: {len(known_face_encodings)} reference faces from "
+    f"{len(set(known_face_names))} identities."
+)
+
+if skipped:
+    st.warning(f"{skipped} reference images were skipped because a face could not be encoded.")
+
+with st.expander("View registered identities"):
+    for identity in sorted(set(known_face_names)):
+        count = known_face_names.count(identity)
+        st.write(f"{identity}: {count} reference images")
+
+# --------------------------------------------------
+# 4. UPLOAD OR CAPTURE A PHOTO
+# --------------------------------------------------
+
+st.subheader("Choose a test photo")
+
+input_method = st.radio(
+    "Input method",
+    ["Upload image", "Take photo with camera"],
+    horizontal=True,
+)
+
+if input_method == "Upload image":
+    photo = st.file_uploader(
+        "Select a group photo or portrait",
+        type=["jpg", "jpeg", "png", "webp", "bmp"],
+    )
+else:
+    photo = st.camera_input("Take a photo")
+
+if photo is None:
+    st.info("Upload or capture a photo to begin.")
+    st.stop()
+         
+# 5. LOAD THE PHOTO
+# --------------------------------------------------
+
+try:
+    pil_image = Image.open(photo).convert("RGB")
+    image_rgb = np.array(pil_image)
+except Exception as error:
+    st.error(f"Could not open the photo: {error}")
+    st.stop()
+
+
+# 6. DETECT FACES
+# --------------------------------------------------
+
+try:
+    with st.spinner("Detecting and recognizing faces..."):
+        face_locations = face_recognition.face_locations(
+            image_rgb,
+            model="hog",
+        )
+        face_encodings = face_recognition.face_encodings(
+            image_rgb,
+            known_face_locations=face_locations,
+        )
+except Exception as error:
+    st.error(f"Face detection failed: {error}")
+    st.stop()
+
+
+# --------------------------------------------------
+# 7. RECOGNIZE FACES AND RECORD COORDINATES
+# --------------------------------------------------
+
+annotated_image = pil_image.copy()
+draw = ImageDraw.Draw(annotated_image)
+
+try:
+    font = ImageFont.truetype("DejaVuSans-Bold.ttf", 15)
+except OSError:
+    font = ImageFont.load_default()
+
+results = []
+
+for face_number, (location, encoding) in enumerate(
+    zip(face_locations, face_encodings),
+    start=1,
+):
+    # face_locations format: top, right, bottom, left.
+    top, right, bottom, left = location
+
+    # Convert the box to x, y, width, and height.
+    x = int(left)
+    y = int(top)
+    w = int(right - left)
+    h = int(bottom - top)
+
+    distances = face_recognition.face_distance(
+        known_face_encodings,
+        encoding,
+    )
+
+    if len(distances):
+        best_index = int(np.argmin(distances))
+        distance = float(distances[best_index])
+
+        # This is a rough distance-based similarity estimate, not a probability.
+        similarity = max(0.0, (1.0 - distance) * 100.0)
+
+        if distance < RECOGNITION_THRESHOLD:
+            name = known_face_names[best_index]
+        else:
+            name = "Unknown"
+    else:
+        distance = None
+        similarity = None
+        name = "Unknown"
+
+    color = "lime" if name != "Unknown" else "red"
+
+    # Draw the face rectangle.
+    draw.rectangle(
+         [(left, top), (right, bottom)],
         outline=color,
         width=3,
     )
@@ -143,6 +423,8 @@ def find_dataset_root(extract_dir: Path):
             ),
         }
     )
+
+
 
 
 # --------------------------------------------------
@@ -196,4 +478,3 @@ st.caption(
     "probability. Incorrect identification is possible. An Unknown result "
     "does not prove that a person is absent from the gallery."
 )
-
