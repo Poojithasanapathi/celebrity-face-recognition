@@ -9,6 +9,65 @@ import face_recognition
 import numpy as np
 import pandas as pd
 
+# Download the celebrity dataset from Google Drive
+from pathlib import Path
+import zipfile
+import gdown
+
+# Store the ZIP file and extracted dataset in a temporary folder
+DATA_DIR = Path("/tmp/celebrity_dataset")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+ZIP_PATH = DATA_DIR / "Celebrity_Images.zip"
+EXTRACT_DIR = DATA_DIR / "extracted"
+
+# Google Drive file ID from your sharing link
+FILE_ID = "1tf2oMArRQvLm3ufiFxdvYi8-j7RRh-X_"
+
+# Download the ZIP file only if it is not already downloaded
+if not ZIP_PATH.exists():
+    result = gdown.download(
+        id=FILE_ID,
+        output=str(ZIP_PATH),
+        quiet=False,
+        fuzzy=True
+    )
+    if not result:
+        raise RuntimeError(
+            "Could not download the dataset. "
+            "Check Google Drive sharing permissions."
+        )
+
+# Extract the dataset ZIP file
+if not EXTRACT_DIR.exists():
+    EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(ZIP_PATH, "r") as zip_ref:
+        zip_ref.extractall(EXTRACT_DIR)
+
+# Find the folder containing the celebrity subfolders
+possible_folders = [
+    EXTRACT_DIR / "Celebrity Images",
+    EXTRACT_DIR / "archive" / "Celebrity Images",
+    EXTRACT_DIR
+]
+
+DATASET_PATH = next(
+    (
+        folder for folder in possible_folders
+        if folder.is_dir()
+        and any(item.is_dir() for item in folder.iterdir())
+    ),
+    None
+)
+
+if DATASET_PATH is None:
+    raise RuntimeError(
+        "Celebrity folders were not found inside the ZIP file."
+    )
+
+print("Dataset loaded from:", DATASET_PATH)
+
+
 from PIL import Image, ImageDraw, ImageFont
 
 
