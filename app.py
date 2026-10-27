@@ -177,18 +177,15 @@ status = st.empty()
 status.info("Starting celebrity dataset setup...")
 
 try:
-    with st.spinner("Preparing the celebrity dataset..."):
-        DATASET_PATH = download_and_prepare_dataset()
+    status.info("Downloading and preparing the celebrity dataset...")
 
-    status.success("Celebrity dataset loaded successfully!")
+    DATASET_PATH = download_and_prepare_dataset()
+
+    status.success("Dataset loaded successfully!")
 
 except Exception as error:
-    status.error("Could not load the celebrity dataset.")
+    st.error("Dataset loading failed.")
     st.exception(error)
-    st.info(
-        "Check the Google Drive file ID, sharing permissions, "
-        "ZIP file, and folder structure."
-    )
     st.stop()
 
 st.success(f"Dataset folder found: {DATASET_PATH}")
