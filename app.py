@@ -20,7 +20,8 @@ st.set_page_config(
     page_icon="📸",
     layout="wide",
 )
-
+st.title("Celebrity Face Recognition")
+st.info("The application has started. Loading the face-recognition dataset...")
 st.title("📸 Celebrity Face Detection and Recognition")
 st.write(
     "Upload a photo or take a picture to detect faces and compare them "
