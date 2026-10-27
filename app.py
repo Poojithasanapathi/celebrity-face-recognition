@@ -20,7 +20,7 @@ st.set_page_config(
     page_icon="📸",
     layout="wide",
 )
-
+st.write("TEST: Streamlit page is working!")
 st.title("📸 Celebrity Face Detection and Recognition")
 st.write(
     "Upload a photo or take a picture to detect faces and compare them "
@@ -172,19 +172,20 @@ def download_and_prepare_dataset():
 
 
 try:
+    st.write("Step 1: Starting dataset download...")
     with st.spinner("Downloading and preparing the celebrity dataset..."):
         DATASET_PATH = download_and_prepare_dataset()
+
+    st.write("Step 2: Dataset download and preparation finished.")
+
 except Exception as error:
     st.error("Could not load the celebrity dataset.")
     st.exception(error)
-    st.info(
-        "Open the Google Drive ZIP's Share settings and set General access "
-        "to 'Anyone with the link' and role to 'Viewer'."
-    )
     st.stop()
 
 st.success(f"Dataset folder found: `{DATASET_PATH}`")
 
+st.write("Step 3: Building celebrity face gallery...")
 
 # --------------------------------------------------
 # 3. BUILD THE CELEBRITY REFERENCE GALLERY
