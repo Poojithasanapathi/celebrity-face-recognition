@@ -42,12 +42,13 @@ IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 RECOGNITION_THRESHOLD = 0.48
 
 
-# --------------------------------------------------
 # 2. DOWNLOAD AND EXTRACT THE DATASET
 # --------------------------------------------------
 
+import shutil
+
 def folder_has_image_files(folder: Path) -> bool:
-    """Return True if this folder contains supported image files directly."""
+    """Check whether a folder contains supported image files."""
     try:
         return any(
             item.is_file() and item.suffix.lower() in IMAGE_EXTENSIONS
@@ -58,73 +59,65 @@ def folder_has_image_files(folder: Path) -> bool:
 
 
 def find_dataset_root(extract_dir: Path):
-    """
-    Find the folder that contains the celebrity identity folders.
-    Expected structure:
-        Celebrity Images/
-            virat_kohli/
-                image1.jpg
-            messi/
-                image1.jpg
-    """
+    """Find the folder containing celebrity identity folders."""
+    if not extract_dir.exists():
+        return None
+
+    # Search likely locations first.
     candidates = [
         extract_dir / "Celebrity Images",
         extract_dir / "archive" / "Celebrity Images",
         extract_dir,
     ]
 
-    # Also check nested folders named "Celebrity Images".
     try:
         candidates.extend(
-            p for p in extract_dir.rglob("Celebrity Images") if p.is_dir()
+            p for p in extract_dir.rglob("Celebrity Images")
+            if p.is_dir()
         )
     except OSError:
         pass
 
-    # Remove duplicate paths while preserving order.
-    unique_candidates = []
     seen = set()
-    for path in candidates:
-        key = str(path)
-        if key not in seen and path.is_dir():
-            unique_candidates.append(path)
-            seen.add(key)
 
-    # The dataset root should have subfolders that contain images,
-    # either directly or inside nested folders.
-    for candidate in unique_candidates:
+    for candidate in candidates:
+        if not candidate.is_dir() or str(candidate) in seen:
+            continue
+        seen.add(str(candidate))
+
         try:
-            identity_folders = [
-                item for item in candidate.iterdir() if item.is_dir()
-            ]
+            for identity_folder in candidate.iterdir():
+                if not identity_folder.is_dir():
+                    continue
+
+                if folder_has_image_files(identity_folder):
+                    return candidate
+
+                # Handle an extra nested folder inside an identity folder.
+                try:
+                    for subfolder in identity_folder.iterdir():
+                        if subfolder.is_dir() and folder_has_image_files(subfolder):
+                            return candidate
+                except OSError:
+                    continue
         except OSError:
             continue
-
-        for identity_folder in identity_folders:
-            if folder_has_image_files(identity_folder):
-                return candidate
-            try:
-                if any(
-                    folder_has_image_files(subfolder)
-                    for subfolder in identity_folder.rglob("*")
-                    if subfolder.is_dir()
-                ):
-                    return candidate
-            except OSError:
-                continue
 
     return None
 
 
 @st.cache_resource(show_spinner=False)
 def download_and_prepare_dataset():
-    """Download the ZIP from Drive, extract it, and locate the image gallery."""
+    """Download, validate, extract, and locate the dataset."""
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
-   # Download the dataset if it is not already available in this instance.
+
+    # Reuse the existing ZIP if it has already been downloaded.
     if not ZIP_PATH.exists() or ZIP_PATH.stat().st_size == 0:
-        if ZIP_PATH.exists():
-            ZIP_PATH.unlink()
+        status.info("Step 1/3: Downloading celebrity ZIP from Google Drive...")
+
+        ZIP_PATH.parent.mkdir(parents=True, exist_ok=True)
 
         downloaded_path = gdown.download(
             id=GOOGLE_DRIVE_FILE_ID,
@@ -133,26 +126,34 @@ def download_and_prepare_dataset():
             fuzzy=True,
         )
 
-        if not downloaded_path or not ZIP_PATH.exists() or ZIP_PATH.stat().st_size == 0:
+        if (
+            not downloaded_path
+            or not ZIP_PATH.exists()
+            or ZIP_PATH.stat().st_size == 0
+        ):
             raise RuntimeError(
-                "Google Drive download failed. Check that the file's General "
-                "access is set to 'Anyone with the link' (Viewer)."
+                "ZIP download failed. Set Google Drive sharing to "
+                "'Anyone with the link' and Viewer."
             )
 
-    # Check that the downloaded file is really a ZIP.
+    # Verify that the downloaded file is a valid ZIP.
+    status.info("Step 2/3: Checking the ZIP file...")
+
     if not zipfile.is_zipfile(ZIP_PATH):
         raise RuntimeError(
-            "The downloaded file is not a valid ZIP archive. Check the Google "
-            "Drive sharing link and make sure it points to Celebrity_Images.zip."
+            "The downloaded file is not a valid ZIP. "
+            "Check your Google Drive file ID and sharing permissions."
         )
 
-        # Extract only if the expected gallery cannot already be found.
+    # Reuse the extracted dataset if it is already present.
     dataset_root = find_dataset_root(EXTRACT_DIR)
+
     if dataset_root is None:
-        # Clear a partial extraction from an earlier failed run.
+        status.info("Step 3/3: Extracting the ZIP file...")
+
+        # Remove incomplete extraction from a previous attempt.
         for child in EXTRACT_DIR.iterdir():
             if child.is_dir():
-                import shutil
                 shutil.rmtree(child)
             else:
                 child.unlink()
@@ -164,27 +165,34 @@ def download_and_prepare_dataset():
 
     if dataset_root is None:
         raise RuntimeError(
-            "The ZIP was downloaded and extracted, but celebrity folders were "
-            "not found. The ZIP should contain a 'Celebrity Images' folder "
-            "with one subfolder per identity, such as 'messi' or 'virat_kohli'."
+            "ZIP extraction completed, but celebrity folders containing "
+            "images were not found. Check the ZIP's folder structure."
         )
 
     return dataset_root
 
 
+# Show the app before starting the download.
+status = st.empty()
+status.info("Starting celebrity dataset setup...")
+
 try:
-    with st.spinner("Downloading and preparing the celebrity dataset..."):
+    with st.spinner("Preparing the celebrity dataset..."):
         DATASET_PATH = download_and_prepare_dataset()
+
+    status.success("Celebrity dataset loaded successfully!")
+
 except Exception as error:
-    st.error("Could not load the celebrity dataset.")
+    status.error("Could not load the celebrity dataset.")
     st.exception(error)
     st.info(
-        "Open the Google Drive ZIP's Share settings and set General access "
-        "to 'Anyone with the link' and role to 'Viewer'."
+        "Check the Google Drive file ID, sharing permissions, "
+        "ZIP file, and folder structure."
     )
     st.stop()
 
-st.success(f"Dataset folder found: `{DATASET_PATH}`")
+st.success(f"Dataset folder found: {DATASET_PATH}")
+
 
 
 # --------------------------------------------------
